@@ -1,18 +1,24 @@
 import React from 'react'
 import { render } from 'react-dom'
 import { promisifyAll } from 'bluebird'
+import abi from './abi.js'
 import './index.styl'
 
 class App extends React.Component {
     constructor() {
         super()
+        window.web3 = new Web3(web3.currentProvider)
+        window.contractInstance = web3.eth.contract(abi).at("0xf1845b04141798d58a08b5ad15f31c5a80810c91")
+        promisifyAll(contractInstance)
+        promisifyAll(web3)
         this.state = {
             products: [],
             showProducts: [],
             showAddProduct: false,
             newProductTitle: '',
             newProductDescription: '',
-            newProductPrice: ''
+            newProductPrice: '',
+            lastId: 0
         }
     }
 
@@ -20,34 +26,45 @@ class App extends React.Component {
         this.setInitialProducts()
     }
 
-    setInitialProducts() {
+    async setInitialProducts() {
+        // Get all the products from the smart contract
+        // Get the last id, loop over all the products, only return the products on sale
+        const lastId = (await contractInstance.lastIdAsync()).toNumber()
+        let products = []
+        for(let i = 0; i < lastId; i++) {
+            let myProduct = await contractInstance.productsAsync(i)
+
+            // If this product is not on sale, don't add it to the list
+            if(!myProduct[5]) continue
+
+            products.push({
+                title: myProduct[1],
+                description: myProduct[2],
+                price: myProduct[3].toString(),
+                owner: myProduct[4],
+                id: myProduct[0].toNumber()
+            })
+        }
         this.setState({
-            products: [{
-                title: 'Weed Plant For Home Use',
-                description: 'This is the best plant that you\'ll find for satisfying your medicinal needs and to calm yourself',
-                price: '29.95'
-            }, {
-                title: 'Organic Tomato Plant',
-                description: 'Grow your own healthy tomatos with this all natural plant that will provide you with tons of vegetables',
-                price: '34.95'
-            }, {
-                title: 'Organic Watermelon Plant',
-                description: 'This is the best watermelon plant on the market to grow your own healthy watermelons for the summer',
-                price: '19.95'
-            }]
+            products: products,
+            lastId: lastId
         }, () => this.updateProducts())
     }
 
-    publishProduct() {
+    async publishProduct() {
         const product = {
             title: this.state.newProductTitle,
             description: this.state.newProductDescription,
             price: this.state.newProductPrice
         }
 
-        this.setState(prevState => ({
-            products: [product, ...prevState.products]
-        }), () => this.updateProducts())
+        await contractInstance.uploadProductAsync(product.title, product.description, product.price)
+
+        this.updateProducts()
+    }
+
+    async buyProduct(id, price) {
+        await contractInstance.buyProductAsync(id, {value: web3.toWei(price)})
     }
 
     resetNewProduct() {
@@ -69,6 +86,10 @@ class App extends React.Component {
                 title={product.title}
                 description={product.description}
                 price={product.price}
+                id={product.id}
+                buyProduct={(id, price) => {
+                    this.buyProduct(id, price)
+                }}
             />
         ))
         this.setState({showProducts: products})
@@ -140,9 +161,11 @@ class Product extends React.Component {
                 <img src="planta.jpg" className="full-width" />
                 <h3>{this.props.title}</h3>
                 <p>{this.props.description}</p>
-                <b>{this.props.price}€</b>
+                <b>{this.props.price} ETH</b>
                 <div>
-                    <button className="full-width">Buy now</button>
+                    <button className="full-width" onClick={() => {
+                        this.props.buyProduct(this.props.id, this.props.price)
+                    }}>Buy now</button>
                 </div>
             </div>
         )
